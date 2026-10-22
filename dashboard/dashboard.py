@@ -51,9 +51,9 @@ def get_live_data_file():
         BASE_DIR.parent / "live_data" / "vnc_live_data_v2.json",
         BASE_DIR / "SmartVNC" / "live_data" / "vnc_live_data_v2.json",
     ]
-    for p in candidates:
-        if p.exists():
-            return p
+    existing = [p for p in candidates if p.exists()]
+    if existing:
+        return max(existing, key=lambda p: p.stat().st_mtime)
     return candidates[0]
 
 LIVE_DATA_FILE = get_live_data_file()
