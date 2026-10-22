@@ -240,7 +240,8 @@ if not LIVE_DATA_FILE.exists():
         "to begin receiving live VNC data."
     )
 
-    st.stop()
+    time.sleep(2)
+    st.rerun()
 
 
 if "last_good_data" not in st.session_state:
