@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.vscode/
+
+# Large raw datasets
+datasets/cert/
+datasets/cicids/
+datasets/backup/
+datasets/extracted/
+
+# Large generated risk/output files
+datasets/risk/
+datasets/processed/*.csv
+datasets/ml_ready/*
+!datasets/ml_ready/scaler.pkl
+
+# Runtime databases & live states
+database/*.db
+live_data/vnc_live_data_v2.json
+
+# Generated graphs
+docs/graphs/
+
+# Large model files
+ml-engine/models/saved_models/*.pkl
+!ml-engine/models/saved_models/final_xgboost_150.pkl
+!ml-engine/models/saved_models/final_scaler.pkl
+
+# Temporary files
+*tempCodeRunnerFile.py
+
+ml-engine/models/saved/*.pkl
+
+datasets/ml_ready/cicids_ml_ready.csv

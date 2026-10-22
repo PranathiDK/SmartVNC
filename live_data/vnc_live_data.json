@@ -1,0 +1,10 @@
+{
+    "vnc_active": true,
+    "session_duration": 5831.024839639664,
+    "forward_packets": 0,
+    "backward_packets": 0,
+    "bytes_per_second": 0.0,
+    "packets_per_second": 0.0,
+    "protocol": 6,
+    "last_updated": "14:14:43"
+}
