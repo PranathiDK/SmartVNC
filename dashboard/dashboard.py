@@ -45,11 +45,18 @@ from database.db_manager import (
     get_blocked_devices
 )
 
-LIVE_DATA_FILE = (
-    BASE_DIR
-    / "live_data"
-    / "vnc_live_data_v2.json"
-)
+def get_live_data_file():
+    candidates = [
+        BASE_DIR / "live_data" / "vnc_live_data_v2.json",
+        BASE_DIR.parent / "live_data" / "vnc_live_data_v2.json",
+        BASE_DIR / "SmartVNC" / "live_data" / "vnc_live_data_v2.json",
+    ]
+    for p in candidates:
+        if p.exists():
+            return p
+    return candidates[0]
+
+LIVE_DATA_FILE = get_live_data_file()
 
 ALERTS_FILE = (
     BASE_DIR
@@ -228,6 +235,8 @@ st.markdown(
 # ============================================================
 # READ LIVE DATA
 # ============================================================
+
+LIVE_DATA_FILE = get_live_data_file()
 
 if not LIVE_DATA_FILE.exists():
 

@@ -78,12 +78,24 @@ def write_live_data(
 
     # --------------------------------------------------------
     # Atomic write JSON to prevent partial reads by dashboard
+    # Supports nested workspace folders (e.g. C:\SmartVNC\SmartVNC)
     # --------------------------------------------------------
 
-    temp_file = LIVE_DATA_FILE.with_suffix(".tmp")
-    with open(temp_file, "w", encoding="utf-8") as file:
-        json.dump(data, file, indent=4)
-    temp_file.replace(LIVE_DATA_FILE)
+    target_files = [LIVE_DATA_FILE]
+    nested_dir = BASE_DIR / "SmartVNC" / "live_data"
+    if nested_dir.exists():
+        target_files.append(nested_dir / "vnc_live_data_v2.json")
+    if BASE_DIR.parent.name.lower() == "smartvnc" and (BASE_DIR.parent / "live_data").exists():
+        target_files.append(BASE_DIR.parent / "live_data" / "vnc_live_data_v2.json")
+
+    for tf in target_files:
+        try:
+            temp_file = tf.with_suffix(".tmp")
+            with open(temp_file, "w", encoding="utf-8") as file:
+                json.dump(data, file, indent=4)
+            temp_file.replace(tf)
+        except Exception:
+            pass
 
 
 # ============================================================

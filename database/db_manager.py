@@ -3,7 +3,19 @@ import pandas as pd
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parents[1]
-DB_PATH = BASE_DIR / "database" / "smartvnc.db"
+
+def get_db_path():
+    candidates = [
+        BASE_DIR / "database" / "smartvnc.db",
+        BASE_DIR.parent / "database" / "smartvnc.db",
+        BASE_DIR / "SmartVNC" / "database" / "smartvnc.db",
+    ]
+    for p in candidates:
+        if p.exists():
+            return p
+    return candidates[0]
+
+DB_PATH = get_db_path()
 
 def init_db():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
