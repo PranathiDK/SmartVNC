@@ -279,7 +279,7 @@ except Exception as e:
 
 
 # ============================================================
-# EXTRACT NETWORK FEATURES & MULTI-DEVICE SUPPORT
+# EXTRACT ACTIVE CLIENT NETWORK FEATURES
 # ============================================================
 
 vnc_active = bool(
@@ -316,25 +316,40 @@ device_results = {}
 critical_threats = []
 
 if vnc_active and devices:
+    active_client = next(iter(devices))
+    devices = {active_client: devices[active_client]}
     for d_ip, d_stats in devices.items():
         payload = {
             "session_duration": float(d_stats.get("session_duration", 0.0)),
             "forward_packets": int(d_stats.get("forward_packets", 0)),
             "backward_packets": int(d_stats.get("backward_packets", 0)),
+            "forward_bytes": int(d_stats.get("forward_bytes", 0)),
+            "backward_bytes": int(d_stats.get("backward_bytes", 0)),
             "bytes_per_second": float(d_stats.get("bytes_per_second", 0.0)),
             "packets_per_second": float(d_stats.get("packets_per_second", 0.0)),
+            "burst_bytes": float(d_stats.get("burst_bytes", 0.0)),
             "protocol": int(d_stats.get("protocol", 6)),
-            "client_ip": d_ip,
+            "client_ip": d_stats.get("client_ip", d_ip),
             "client_port": int(d_stats.get("client_port", 0))
         }
         try:
-            response = requests.post(API_URL, json=payload, timeout=3)
+            response = requests.post(API_URL, json=payload, timeout=20)
             if response.status_code == 200:
                 res_data = response.json()
                 if res_data.get("success"):
                     device_results[d_ip] = res_data
                     if res_data.get("risk_level") in ["HIGH", "CRITICAL"]:
-                        critical_threats.append((d_ip, float(res_data.get("risk_score", 0.0)), res_data.get("risk_level")))
+                        critical_threats.append((
+                            d_stats.get("client_ip", d_ip),
+                            float(res_data.get("risk_score", 0.0)),
+                            res_data.get("risk_level"),
+                        ))
+            else:
+                try:
+                    error_detail = response.json().get("error", response.text)
+                except ValueError:
+                    error_detail = response.text
+                st.error(f"Risk API failed for {d_ip}: {error_detail}")
         except requests.exceptions.ConnectionError:
             st.error("Cannot connect to SMARTVNC API. Please ensure risk_api.py is running.")
             st.stop()
@@ -366,21 +381,13 @@ st.markdown(
 st.divider()
 
 # ============================================================
-# MULTI-DEVICE SELECTION & DEVICE STATS
+# ACTIVE CLIENT STATS
 # ============================================================
 
-if vnc_active and devices:
-    device_list = list(devices.keys())
-    if len(device_list) > 1:
-        st.info(f"🌐 **Multi-Device Environment:** {len(device_list)} active VNC clients connected simultaneously.")
-        selected_ip = st.selectbox("🎯 Select Client Device to Inspect in Detail:", device_list)
-    else:
-        selected_ip = device_list[0]
-else:
-    selected_ip = None
+selected_ip = next(iter(devices), None) if vnc_active else None
 
-# Extract statistics for the selected device (or defaults if inactive)
-if selected_ip and selected_ip in devices:
+# Extract statistics for the active client (or defaults if inactive)
+if selected_ip:
     sel_stats = devices[selected_ip]
     sel_res = device_results.get(selected_ip, {
         "risk_score": 0.0,
@@ -394,8 +401,7 @@ if selected_ip and selected_ip in devices:
     bytes_per_second = float(sel_stats.get("bytes_per_second", 0.0))
     packets_per_second = float(sel_stats.get("packets_per_second", 0.0))
     protocol = int(sel_stats.get("protocol", 6))
-    client_ip = selected_ip
-
+    selected_ip = sel_stats.get("client_ip", selected_ip)
     risk_score = float(sel_res.get("risk_score", 0.0))
     risk_level = sel_res.get("risk_level", "LOW")
     status = sel_res.get("status", "NORMAL")
@@ -407,6 +413,7 @@ else:
     packets_per_second = 0.0
     protocol = 6
     client_ip = "None"
+    selected_ip = None
     risk_score = 0.0
     risk_level = "LOW"
     status = "NORMAL"
@@ -417,7 +424,7 @@ minutes = (total_seconds % 3600) // 60
 seconds = total_seconds % 60
 session_duration_display = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
-# Append to history for the live graph (limit to 60 data points / 60 seconds)
+# Keep the risk trend for the single active VNC client.
 st.session_state.risk_history.append(risk_score)
 if len(st.session_state.risk_history) > 60:
     st.session_state.risk_history.pop(0)
@@ -451,7 +458,10 @@ st.markdown(
 
 if critical_threats:
     for th_ip, th_sc, th_lvl in critical_threats:
-        st.error(f"🚨 **ACTIVE EXFILTRATION THREAT: {th_lvl} RISK on Client {th_ip} ({th_sc:.2f}%)** — Active Defense Triggered!")
+        st.error(
+            f"🚨 **ACTIVE EXFILTRATION THREAT: {th_lvl} RISK on "
+            f"Client {th_ip} ({th_sc:.2f}%)** — Active Defense Triggered!"
+        )
 
 if not (vnc_active and selected_ip):
     st.session_state.risk_history = []
@@ -463,7 +473,7 @@ if not (vnc_active and selected_ip):
     )
     st.info(
         "📡 **System Standing By:** No VNC client is connected. Waiting for inbound connection on port 5900...\n\n"
-        "Live network bandwidth, real-time exfiltration risk score, and isolated activity history will appear automatically once a client device connects."
+        "Live network bandwidth and real-time exfiltration risk score will appear when a VNC client connects."
     )
 
     try:
@@ -477,7 +487,7 @@ if not (vnc_active and selected_ip):
                 unsafe_allow_html=True
             )
             st.dataframe(
-                blocked_df[['timestamp', 'client_ip', 'client_port', 'reason', 'status']],
+                blocked_df[['timestamp', 'client_ip', 'reason', 'status']],
                 use_container_width=True,
                 hide_index=True
             )
@@ -504,20 +514,12 @@ if not (vnc_active and selected_ip):
     st.rerun()
 
 # --- ACTIVE CLIENT SESSION VIEW ---
-if len(devices) > 1:
-    st.markdown(
-        f'<div class="active-status">'
-        f'🟢 ACTIVE — {len(devices)} Devices Connected (Inspecting: {selected_ip})'
-        f'</div>',
-        unsafe_allow_html=True
-    )
-else:
-    st.markdown(
-        f'<div class="active-status">'
-        f'🟢 ACTIVE (Client: {selected_ip})'
-        f'</div>',
-        unsafe_allow_html=True
-    )
+st.markdown(
+    f'<div class="active-status">'
+    f'🟢 ACTIVE (Client: {selected_ip})'
+    f'</div>',
+    unsafe_allow_html=True
+)
 
 st.markdown(
     f'<div class="session-duration">'
@@ -525,21 +527,6 @@ st.markdown(
     f'</div>',
     unsafe_allow_html=True
 )
-
-if len(devices) > 1:
-    summary_rows = []
-    for d_ip, d_stats in devices.items():
-        res = device_results.get(d_ip, {})
-        summary_rows.append({
-            "Device IP": d_ip,
-            "Risk Score": f"{float(res.get('risk_score', 0.0)):.2f}%",
-            "Risk Level": res.get("risk_level", "LOW"),
-            "Threat Status": res.get("status", "NORMAL"),
-            "Speed": f"{float(d_stats.get('bytes_per_second', 0.0)):,.1f} B/s",
-            "Duration": f"{int(d_stats.get('session_duration', 0.0))}s"
-        })
-    st.caption("Concurrent Devices Overview:")
-    st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
 
 st.divider()
 
@@ -549,12 +536,16 @@ st.divider()
 is_blocked = is_device_blocked(selected_ip) if selected_ip else False
 
 if is_blocked:
-    st.error(f"🛑 **DEVICE BLOCKED:** Client {selected_ip} has been TERMINATED and is BLOCKED in Windows Firewall.")
+    st.error(f"🛑 **ACTIVE DEFENSE ENFORCED:** Client {selected_ip} is actively blocked.")
     if st.button(f"🔓 Unblock Device ({selected_ip})", key=f"unblock_btn_{selected_ip}"):
         try:
-            resp = requests.post(f"http://{API_HOST}:{API_PORT}/unblock", json={"client_ip": selected_ip}, timeout=5)
+            resp = requests.post(
+                f"http://{API_HOST}:{API_PORT}/unblock",
+                json={"client_ip": selected_ip},
+                timeout=5
+            )
             if resp.status_code == 200 and resp.json().get("success"):
-                st.success(f"Device {selected_ip} has been unblocked from Windows Firewall!")
+                st.success(f"Client {selected_ip} has been unblocked!")
                 time.sleep(1)
                 st.rerun()
             else:
@@ -563,29 +554,51 @@ if is_blocked:
             st.error(f"Cannot reach Risk API to unblock: {e}")
 
 elif risk_level == "CRITICAL" and selected_ip:
-    st.error(f"🚨 **ACTIVE DEFENSE ENFORCED:** CRITICAL exfiltration risk ({risk_score:.2f}%) detected! Active VNC connection severed and {selected_ip} blocked in Windows Firewall.")
-    if st.button(f"🔓 Unblock Device ({selected_ip})", key=f"unblock_crit_{selected_ip}"):
-        try:
-            resp = requests.post(f"http://{API_HOST}:{API_PORT}/unblock", json={"client_ip": selected_ip}, timeout=5)
-            if resp.status_code == 200 and resp.json().get("success"):
-                st.success(f"Device {selected_ip} unblocked!")
-                time.sleep(1)
-                st.rerun()
-        except Exception as e:
-            st.error(f"Error unblocking: {e}")
+    st.error(
+        f"🚨 **CRITICAL EXFILTRATION DETECTED ({risk_score:.2f}%):** "
+        f"Client {selected_ip} triggered active defense."
+    )
+
+elif risk_level == "HIGH" and selected_ip:
+    st.warning(f"⚠️ **HIGH RISK THREAT DETECTED ({risk_score:.2f}%):** Suspicious exfiltration bandwidth. Monitoring closely. Operator may terminate session below.")
+    col_block, col_dummy = st.columns([1, 1])
+    with col_block:
+        if st.button(
+            f"🚨 Terminate & Block Device ({selected_ip})",
+            key=f"manual_block_high_{selected_ip}",
+            help="Immediately sever the active VNC session and block this client at Windows Firewall",
+        ):
+            try:
+                resp = requests.post(
+                    f"http://{API_HOST}:{API_PORT}/block",
+                    json={"client_ip": selected_ip, "reason": f"High Risk Activity ({risk_score:.2f}%)"},
+                    timeout=5
+                )
+                if resp.status_code == 200 and resp.json().get("success"):
+                    st.warning(f"Active connection severed! {resp.json().get('message', '')}")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("Failed to execute block.")
+            except Exception as e:
+                st.error(f"Error contacting Risk API: {e}")
 
 elif vnc_active and selected_ip:
     col_block, col_dummy = st.columns([1, 1])
     with col_block:
-        if st.button(f"🚨 Terminate & Block Device ({selected_ip})", key=f"manual_block_{selected_ip}", help="Immediately sever VNC connection and block at Windows Firewall"):
+        if st.button(
+            f"🚨 Terminate & Block Device ({selected_ip})",
+            key=f"manual_block_{selected_ip}",
+            help="Immediately sever the active VNC session and block this client at Windows Firewall",
+        ):
             try:
                 resp = requests.post(
                     f"http://{API_HOST}:{API_PORT}/block",
-                    json={"client_ip": selected_ip, "client_port": int(sel_stats.get("client_port", 0)), "reason": "Manual Operator Action"},
+                    json={"client_ip": selected_ip, "reason": "Manual Operator Action"},
                     timeout=5
                 )
                 if resp.status_code == 200 and resp.json().get("success"):
-                    st.warning(f"Active connection severed! Device {selected_ip} blocked in Windows Firewall.")
+                    st.warning(f"Active connection severed! {resp.json().get('message', '')}")
                     time.sleep(1)
                     st.rerun()
                 else:
@@ -789,7 +802,7 @@ st.markdown(
     unsafe_allow_html=True
 )
 history_df = pd.DataFrame(
-    st.session_state.risk_history, 
+    st.session_state.risk_history,
     columns=["Risk Score (%)"]
 )
 history_df.index.name = "Time (Last 60s)"
@@ -832,10 +845,14 @@ try:
             
         recent_alerts['risk_score'] = recent_alerts['risk_score'].apply(format_risk_score)
         
-        display_cols = ['timestamp', 'client_ip']
-        if 'client_port' in recent_alerts.columns:
-            display_cols.append('client_port')
-        display_cols.extend(['risk_score', 'risk_level', 'status', 'recommended_action'])
+        display_cols = [
+            'timestamp',
+            'client_ip',
+            'risk_score',
+            'risk_level',
+            'status',
+            'recommended_action',
+        ]
         
         st.dataframe(
             recent_alerts[display_cols],
@@ -865,10 +882,15 @@ try:
     if not high_risk_alerts.empty:
         high_risk_alerts['risk_score'] = high_risk_alerts['risk_score'].apply(format_risk_score)
         
-        hr_display_cols = ['timestamp', 'client_ip']
-        if 'client_port' in high_risk_alerts.columns:
-            hr_display_cols.append('client_port')
-        hr_display_cols.extend(['risk_score', 'risk_level', 'status', 'recommended_action', 'bytes_per_second'])
+        hr_display_cols = [
+            'timestamp',
+            'client_ip',
+            'risk_score',
+            'risk_level',
+            'status',
+            'recommended_action',
+            'bytes_per_second',
+        ]
         
         st.dataframe(
             high_risk_alerts[hr_display_cols],
@@ -895,7 +917,7 @@ try:
             unsafe_allow_html=True
         )
         st.dataframe(
-            blocked_df[['timestamp', 'client_ip', 'client_port', 'reason', 'status']],
+            blocked_df[['timestamp', 'client_ip', 'reason', 'status']],
             use_container_width=True,
             hide_index=True
         )

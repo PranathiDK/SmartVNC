@@ -55,37 +55,27 @@ sys.path.append(str(BASE_DIR / "ml-engine"))
 from database.db_manager import log_alert
 
 _last_notification_time = 0
-_auto_blocked_ips = set()
 
 def clear_blocked_cache(client_ip=None):
-    global _auto_blocked_ips
-    if client_ip:
-        _auto_blocked_ips.discard(client_ip)
-    else:
-        _auto_blocked_ips.clear()
+    pass
 
-def _trigger_automated_block(client_ip, client_port, risk_score):
-    global _auto_blocked_ips
-    if client_ip in _auto_blocked_ips:
+def _trigger_automated_block(client_ip, risk_score):
+    from database.db_manager import is_device_blocked
+    if is_device_blocked(client_ip):
         return
-    _auto_blocked_ips.add(client_ip)
 
-    def _worker():
-        try:
-            from vnc_prevention import enforce_block
-            enforce_block(
-                client_ip=client_ip,
-                client_port=client_port,
-                reason=f"Automated Defense: CRITICAL exfiltration risk ({risk_score:.2f}%)"
-            )
-            _safe_os_notify(
-                title=f"SMARTVNC ACTIVE DEFENSE: {client_ip}",
-                message=f"CRITICAL risk ({risk_score:.2f}%) detected! Active VNC connection severed and device blocked at firewall."
-            )
-        except Exception as e:
-            print(f"[ERROR] Automated block worker error: {e}")
+    from vnc_prevention import enforce_block
+    success, message = enforce_block(
+        client_ip=client_ip,
+        reason=f"Automated Defense: CRITICAL exfiltration risk ({risk_score:.2f}%)"
+    )
+    if not success:
+        raise RuntimeError(f"Failed to block critical-risk client {client_ip}: {message}")
 
-    threading.Thread(target=_worker, daemon=True).start()
+    _safe_os_notify(
+        title=f"SMARTVNC ACTIVE DEFENSE: {client_ip}",
+        message=f"CRITICAL risk ({risk_score:.2f}%) detected! Active VNC connection severed and device blocked at firewall."
+    )
 
 def _safe_os_notify(title, message):
     global _last_notification_time
@@ -171,7 +161,10 @@ def process_session(
     packets_per_second,
     protocol,
     client_ip="Unknown",
-    client_port=0
+    client_port=0,
+    forward_bytes=0,
+    backward_bytes=0,
+    burst_bytes=0.0
 ):
 
     # --------------------------------------------------------
@@ -190,7 +183,13 @@ def process_session(
 
         packets_per_second=packets_per_second,
 
-        protocol=protocol
+        protocol=protocol,
+
+        forward_bytes=forward_bytes,
+
+        backward_bytes=backward_bytes,
+
+        burst_bytes=burst_bytes
     )
 
     # --------------------------------------------------------
@@ -201,16 +200,7 @@ def process_session(
         result["risk_level"]
     )
 
-    # --------------------------------------------------------
-    # AUTOMATED ACTIVE DEFENSE FOR CRITICAL RISK
-    # --------------------------------------------------------
-    if result["risk_level"] == "CRITICAL" and client_ip and client_ip not in ["Unknown", "None", "127.0.0.1", "localhost"]:
-        _trigger_automated_block(client_ip, client_port, result["risk_score"])
-
-    # --------------------------------------------------------
-    # Save alert/detection (ONLY IF ACTION != MONITOR)
-    # --------------------------------------------------------
-
+    # Save the critical alert before enforcement, so block failures are auditable.
     if action != "MONITOR":
         save_alert(
             result,
@@ -223,6 +213,12 @@ def process_session(
             client_ip,
             client_port
         )
+
+    # --------------------------------------------------------
+    # AUTOMATED ACTIVE DEFENSE FOR CRITICAL RISK
+    # --------------------------------------------------------
+    if result["risk_level"] == "CRITICAL" and client_ip and client_ip not in ["Unknown", "None"]:
+        _trigger_automated_block(client_ip, result["risk_score"])
 
     # --------------------------------------------------------
     # Return complete result

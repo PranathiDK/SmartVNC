@@ -73,15 +73,15 @@ print(f"Scaler loaded: {SCALER_PATH}")
 
 def calculate_risk_level(threat_probability):
 
-    probability = threat_probability * 100
+    probability = threat_probability * 100.0
 
-    if probability < 25:
+    if probability < 25.0:
         return "LOW"
 
-    elif probability < 50:
+    elif probability < 50.0:
         return "MEDIUM"
 
-    elif probability < 75:
+    elif probability < 75.0:
         return "HIGH"
 
     else:
@@ -98,7 +98,10 @@ def predict_risk(
     backward_packets,
     bytes_per_second,
     packets_per_second,
-    protocol
+    protocol,
+    forward_bytes=0,
+    backward_bytes=0,
+    burst_bytes=0.0
 ):
 
     # --------------------------------------------------------
@@ -156,37 +159,48 @@ def predict_risk(
     ml_risk_score = ml_threat_prob * 100.0
 
     # --------------------------------------------------------
-    # VNC DATA EXFILTRATION SURGE & BASELINE FUSION ENGINE
+    # MULTI-FACTOR VNC EXFILTRATION & OPERATION FUSION ENGINE
     # --------------------------------------------------------
-    # In VNC (Port 5900), normal interactive screen updates are < 150 KB/s.
-    # When an attacker transfers files (huge zip, documents, databases),
-    # bytes_per_second surges into hundreds of KB/s or MB/s.
-    # When idle or normal typing (< 150 KB/s), the connection is safe
-    # and must not be false-alarmed by cumulative packet counter drift.
+    # Score interactive activity from its throughput band. The monitor only
+    # supplies a transfer burst after sustained high-throughput samples.
+    # Confirmed bursts >= 6 MB are HIGH; >= 14 MB are CRITICAL.
     # --------------------------------------------------------
-    if bytes_per_second < 80000:
-        # Idle / minimal screen changes (< 80 KB/s):
-        # Guaranteed LOW risk (10.0% to 18.0%)
-        risk_score = 10.0 + min(8.0, (bytes_per_second / 80000.0) * 8.0)
+    total_packets = forward_packets + backward_packets
+
+    # Use only the current monitored burst; backward_bytes is cumulative for the session.
+    effective_burst = burst_bytes
+
+    # Once the monitor confirms a transfer, volume determines its risk tier.
+    if effective_burst >= 14000000:
+        surge = 80.0 + min(16.0, ((effective_burst - 14000000.0) / 2800000.0) * 16.0)
+        risk_score = min(96.0, max(surge, ml_risk_score))
+
+    # High-risk demo file is approximately 7.3 MB; the higher threshold
+    # prevents ordinary desktop redraw traffic from being treated as a transfer.
+    elif effective_burst >= 6000000:
+        surge = 55.0 + ((effective_burst - 6000000.0) / 8000000.0) * 17.0
+        risk_score = max(surge, min(72.0, ml_risk_score))
+
+    # UI activity is risk-banded by its expected browsing throughput. Brief high
+    # bandwidth refresh spikes outside this band are not evidence of file transfer.
+    elif bytes_per_second < 100000:
+        risk_score = 0.0
+
     elif bytes_per_second < 150000:
-        # Normal typing / navigation / UI interactions (80 KB/s to 150 KB/s):
-        # Guaranteed LOW risk (18.0% to 24.5%)
-        risk_score = 18.0 + ((bytes_per_second - 80000.0) / 70000.0) * 6.5
-    elif bytes_per_second < 500000:
-        # Moderate transfer / continuous scrolling (150 KB/s to 500 KB/s):
-        # MEDIUM risk (25.0% to 49.0%)
-        surge = 25.0 + ((bytes_per_second - 150000.0) / 350000.0) * 24.0
-        risk_score = max(surge, min(49.0, ml_risk_score))
-    elif bytes_per_second < 1500000:
-        # Active file transfer (500 KB/s to 1.5 MB/s):
-        # HIGH risk (50.0% to 74.0%)
-        surge = 50.0 + ((bytes_per_second - 500000.0) / 1000000.0) * 24.0
-        risk_score = max(surge, min(74.0, ml_risk_score))
+        risk_score = 5.0 + ((bytes_per_second - 100000.0) / 50000.0) * 14.0
+
+    elif bytes_per_second <= 250000 and effective_burst < 2000000:
+        surge = 25.0 + ((bytes_per_second - 150000.0) / 100000.0) * 20.0
+        risk_score = min(45.0, max(surge, min(45.0, ml_risk_score)))
+
     else:
-        # Massive exfiltration / zip archive download (>= 1.5 MB/s):
-        # CRITICAL risk (75.0% to 98.0%)
-        surge = 75.0 + min(23.0, (bytes_per_second - 1500000.0) / 2500000.0 * 23.0)
-        risk_score = min(98.0, max(surge, ml_risk_score))
+        risk_score = 0.0
+
+    # Connection startup safeguard:
+    # If total packets are very low (< 25 packets, e.g. initial connection handshake),
+    # an exfiltration attack is physically impossible.
+    if total_packets < 25 and risk_score >= 25.0:
+        risk_score = 0.0
 
     threat_probability = risk_score / 100.0
     normal_probability = max(0.0, 1.0 - threat_probability)

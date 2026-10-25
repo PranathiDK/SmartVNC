@@ -110,21 +110,29 @@ def record_unblocked_device(client_ip):
     init_db()
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute('''
-        UPDATE blocked_devices SET status = 'UNBLOCKED' WHERE client_ip = ?
-    ''', (client_ip,))
+    cursor.execute(
+        "UPDATE blocked_devices SET status = 'UNBLOCKED' WHERE client_ip = ?",
+        (client_ip,),
+    )
     conn.commit()
     conn.close()
 
 def is_device_blocked(client_ip):
-    if not client_ip or client_ip in ["None", "Unknown", "127.0.0.1", "localhost"]:
+    if not client_ip or client_ip in [
+        "None",
+        "Unknown",
+        "127.0.0.1",
+        "localhost",
+    ]:
         return False
     init_db()
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute('''
-        SELECT status FROM blocked_devices WHERE client_ip = ? AND status = 'BLOCKED'
-    ''', (client_ip,))
+    cursor.execute(
+        "SELECT 1 FROM blocked_devices "
+        "WHERE client_ip = ? AND status = 'BLOCKED' LIMIT 1",
+        (client_ip,),
+    )
     row = cursor.fetchone()
     conn.close()
     return row is not None
@@ -134,7 +142,8 @@ def get_blocked_devices():
     conn = sqlite3.connect(DB_PATH)
     try:
         df = pd.read_sql_query(
-            "SELECT timestamp, client_ip, client_port, reason, status FROM blocked_devices WHERE status = 'BLOCKED' ORDER BY id DESC",
+            "SELECT timestamp, client_ip, client_port, reason, status "
+            "FROM blocked_devices WHERE status = 'BLOCKED' ORDER BY id DESC",
             conn
         )
     except Exception:
@@ -146,10 +155,14 @@ def get_recent_alerts(limit=5, client_ip=None):
     init_db()
     conn = sqlite3.connect(DB_PATH)
     if client_ip and client_ip not in ["None", "Unknown", "All Devices"]:
-        query = f"SELECT * FROM alerts WHERE client_ip = ? ORDER BY id DESC LIMIT {limit}"
-        df = pd.read_sql_query(query, conn, params=(client_ip,))
+        query = (
+            "SELECT * FROM alerts WHERE client_ip = ? "
+            f"ORDER BY id DESC LIMIT {int(limit)}"
+        )
+        params = (client_ip,)
+        df = pd.read_sql_query(query, conn, params=params)
     else:
-        query = f"SELECT * FROM alerts ORDER BY id DESC LIMIT {limit}"
+        query = f"SELECT * FROM alerts ORDER BY id DESC LIMIT {int(limit)}"
         df = pd.read_sql_query(query, conn)
     conn.close()
     return df
@@ -158,8 +171,12 @@ def get_high_risk_alerts(client_ip=None):
     init_db()
     conn = sqlite3.connect(DB_PATH)
     if client_ip and client_ip not in ["None", "Unknown", "All Devices"]:
-        query = "SELECT * FROM alerts WHERE risk_level IN ('HIGH', 'CRITICAL') AND client_ip = ? ORDER BY id DESC"
-        df = pd.read_sql_query(query, conn, params=(client_ip,))
+        query = (
+            "SELECT * FROM alerts WHERE risk_level IN ('HIGH', 'CRITICAL') "
+            "AND client_ip = ? ORDER BY id DESC"
+        )
+        params = (client_ip,)
+        df = pd.read_sql_query(query, conn, params=params)
     else:
         query = "SELECT * FROM alerts WHERE risk_level IN ('HIGH', 'CRITICAL') ORDER BY id DESC"
         df = pd.read_sql_query(query, conn)

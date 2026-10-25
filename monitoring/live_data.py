@@ -45,7 +45,7 @@ def write_live_data(
 
     if devices:
         vnc_active = True
-        # For legacy compatibility, take the first/active client
+        # The monitor reports the single active client.
         primary_ip = list(devices.keys())[0]
         p_dev = devices[primary_ip]
         session_duration = p_dev.get("session_duration", 0.0)
@@ -54,7 +54,7 @@ def write_live_data(
         bytes_per_second = p_dev.get("bytes_per_second", 0.0)
         packets_per_second = p_dev.get("packets_per_second", 0.0)
         protocol = p_dev.get("protocol", 6)
-        client_ip = primary_ip
+        client_ip = p_dev.get("client_ip", primary_ip)
         client_port = p_dev.get("client_port", 0)
     else:
         vnc_active = bool(vnc_active)

@@ -114,6 +114,9 @@ def predict():
         
         client_ip = data.get("client_ip", "Unknown")
         client_port = int(data.get("client_port", 0))
+        forward_bytes = float(data.get("forward_bytes", 0.0))
+        backward_bytes = float(data.get("backward_bytes", 0.0))
+        burst_bytes = float(data.get("burst_bytes", 0.0))
 
         # ----------------------------------------------------
         # Run SMARTVNC risk engine
@@ -135,7 +138,13 @@ def predict():
             
             client_ip=client_ip,
 
-            client_port=client_port
+            client_port=client_port,
+
+            forward_bytes=forward_bytes,
+
+            backward_bytes=backward_bytes,
+
+            burst_bytes=burst_bytes
         )
 
         # ----------------------------------------------------
@@ -204,13 +213,12 @@ def block_device():
     try:
         data = request.get_json() or {}
         client_ip = data.get("client_ip")
-        client_port = int(data.get("client_port", 0))
         reason = data.get("reason", "Manual Operator Defense Action")
         if not client_ip:
             return jsonify({"success": False, "error": "Missing client_ip"}), 400
             
         from vnc_prevention import enforce_block
-        success, msg = enforce_block(client_ip, client_port, reason)
+        success, msg = enforce_block(client_ip, reason=reason)
         return jsonify({"success": success, "message": msg})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500

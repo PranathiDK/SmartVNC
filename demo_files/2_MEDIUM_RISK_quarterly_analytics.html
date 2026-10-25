@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>SmartVNC Demo - Medium Risk Executive Analytics</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background: #0d1117;
+            color: #c9d1d9;
+            margin: 0;
+            padding: 20px;
+        }
+        .header {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-left: 4px solid #f0883e;
+            padding: 16px 20px;
+            border-radius: 6px;
+            margin-bottom: 16px;
+        }
+        h1 { margin: 0 0 6px 0; font-size: 20px; color: #f0883e; }
+        p { margin: 0; font-size: 13px; color: #8b949e; }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        .card {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 14px;
+            text-align: center;
+        }
+        .val { font-size: 22px; font-weight: 700; color: #58a6ff; }
+        .lbl { font-size: 11px; color: #8b949e; text-transform: uppercase; margin-top: 4px; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            font-size: 13px;
+        }
+        th, td {
+            padding: 8px 12px;
+            text-align: left;
+            border-bottom: 1px solid #21262d;
+        }
+        th { background: #21262d; color: #f0f6fc; font-weight: 600; }
+        tr:hover { background: #1c2128; }
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .badge-ok { background: #238636; color: #ffffff; }
+        .badge-warn { background: #9e6a03; color: #ffffff; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>SMARTVNC BENCHMARK: MEDIUM RISK ACTIVITY</h1>
+        <p>Corporate Analytics &amp; Infrastructure Telemetry &bull; Expected Risk Level: <strong>MEDIUM (25% &ndash; 45%)</strong></p>
+    </div>
+
+    <div class="grid">
+        <div class="card"><div class="val">142</div><div class="lbl">Active Nodes</div></div>
+        <div class="card"><div class="val">99.98%</div><div class="lbl">Cluster Health</div></div>
+        <div class="card"><div class="val">1.42 GB/s</div><div class="lbl">Aggregate Flow</div></div>
+        <div class="card"><div class="val" style="color: #f0883e;">ELEVATED</div><div class="lbl">Session State</div></div>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Service Name</th>
+                <th>Cluster Zone</th>
+                <th>State</th>
+                <th>Latency</th>
+                <th>Load Factor</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr><td>auth-service</td><td>us-east-1a</td><td><span class="badge badge-ok">HEALTHY</span></td><td>1.2 ms</td><td>24%</td></tr>
+            <tr><td>payment-gateway</td><td>us-east-1b</td><td><span class="badge badge-ok">HEALTHY</span></td><td>2.8 ms</td><td>38%</td></tr>
+            <tr><td>inventory-db</td><td>us-east-1a</td><td><span class="badge badge-warn">SYNCING</span></td><td>4.5 ms</td><td>62%</td></tr>
+            <tr><td>session-cache</td><td>us-east-1c</td><td><span class="badge badge-ok">HEALTHY</span></td><td>0.8 ms</td><td>19%</td></tr>
+            <tr><td>reporting-etl</td><td>us-east-1b</td><td><span class="badge badge-ok">HEALTHY</span></td><td>3.1 ms</td><td>44%</td></tr>
+            <tr><td>notification-hub</td><td>us-east-1c</td><td><span class="badge badge-ok">HEALTHY</span></td><td>1.5 ms</td><td>21%</td></tr>
+            <tr><td>search-indexer</td><td>us-east-1a</td><td><span class="badge badge-warn">REINDEX</span></td><td>5.2 ms</td><td>71%</td></tr>
+            <tr><td>analytics-stream</td><td>us-east-1b</td><td><span class="badge badge-ok">HEALTHY</span></td><td>2.1 ms</td><td>33%</td></tr>
+            <tr><td>audit-logger</td><td>us-east-1a</td><td><span class="badge badge-ok">HEALTHY</span></td><td>1.1 ms</td><td>15%</td></tr>
+            <tr><td>billing-daemon</td><td>us-east-1c</td><td><span class="badge badge-ok">HEALTHY</span></td><td>2.4 ms</td><td>29%</td></tr>
+            <tr><td>edge-proxy-01</td><td>us-east-1a</td><td><span class="badge badge-ok">HEALTHY</span></td><td>0.9 ms</td><td>42%</td></tr>
+            <tr><td>edge-proxy-02</td><td>us-east-1b</td><td><span class="badge badge-ok">HEALTHY</span></td><td>0.9 ms</td><td>45%</td></tr>
+            <tr><td>edge-proxy-03</td><td>us-east-1c</td><td><span class="badge badge-ok">HEALTHY</span></td><td>1.0 ms</td><td>40%</td></tr>
+            <tr><td>queue-worker-01</td><td>us-east-1a</td><td><span class="badge badge-ok">HEALTHY</span></td><td>1.8 ms</td><td>51%</td></tr>
+            <tr><td>queue-worker-02</td><td>us-east-1b</td><td><span class="badge badge-warn">BUSY</span></td><td>3.6 ms</td><td>82%</td></tr>
+            <tr><td>queue-worker-03</td><td>us-east-1c</td><td><span class="badge badge-ok">HEALTHY</span></td><td>1.9 ms</td><td>54%</td></tr>
+            <tr><td>metrics-collector</td><td>us-east-1a</td><td><span class="badge badge-ok">HEALTHY</span></td><td>1.4 ms</td><td>27%</td></tr>
+            <tr><td>dns-resolver-01</td><td>us-east-1a</td><td><span class="badge badge-ok">HEALTHY</span></td><td>0.4 ms</td><td>12%</td></tr>
+            <tr><td>dns-resolver-02</td><td>us-east-1b</td><td><span class="badge badge-ok">HEALTHY</span></td><td>0.5 ms</td><td>14%</td></tr>
+            <tr><td>storage-gateway</td><td>us-east-1c</td><td><span class="badge badge-ok">HEALTHY</span></td><td>2.7 ms</td><td>48%</td></tr>
+        </tbody>
+    </table>
+</body>
+</html>
