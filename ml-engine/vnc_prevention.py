@@ -1,5 +1,11 @@
-import pandas as pd
-import numpy as np
+try:
+    import pandas as pd
+except ImportError:
+    pd = None
+try:
+    import numpy as np
+except ImportError:
+    np = None
 from pathlib import Path
 from datetime import datetime
 import sys

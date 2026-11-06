@@ -314,5 +314,35 @@ class TransferRiskLevelTests(unittest.TestCase):
         )
 
 
+    def test_fast_file_transfer_confirms_on_volume_threshold(self):
+        session = {"burst_bytes": 0}
+        # 7.3 MB file transferred in two 3.65 MB chunks
+        update_transfer_burst(session, 3_650_000, 3_650_000)
+        burst_bytes = update_transfer_burst(session, 3_650_000, 3_650_000)
+        result = self.predict(bytes_per_second=3_650_000, burst_bytes=burst_bytes)
+        self.assertEqual(result["risk_level"], "HIGH")
+
+    def test_jitter_during_transfer_does_not_clear_accumulated_burst(self):
+        session = {"burst_bytes": 0}
+        # Confirm transfer over 3 ticks
+        update_transfer_burst(session, 300_000, 300_000)
+        update_transfer_burst(session, 300_000, 300_000)
+        update_transfer_burst(session, 300_000, 300_000)
+        # Jitter dip to 160 KB/s
+        burst_bytes = update_transfer_burst(session, 160_000, 160_000)
+        self.assertEqual(burst_bytes, 1_060_000)
+
+    def test_small_activities_stay_strictly_low(self):
+        # Idle connection
+        idle_result = self.predict(bytes_per_second=5_000, burst_bytes=0)
+        self.assertEqual(idle_result["risk_level"], "LOW")
+        self.assertLess(idle_result["risk_score"], 20.0)
+
+        # Typing in Notepad / opening small meeting notes (~30 KB/s)
+        typing_result = self.predict(bytes_per_second=35_000, burst_bytes=0)
+        self.assertEqual(typing_result["risk_level"], "LOW")
+        self.assertLess(typing_result["risk_score"], 20.0)
+
+
 if __name__ == "__main__":
     unittest.main()

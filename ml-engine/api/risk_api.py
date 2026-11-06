@@ -250,6 +250,83 @@ def list_blocked():
 
 
 # ============================================================
+# FILE TRANSFER ACCESS CONTROL & CLASSIFICATION ENDPOINTS
+# ============================================================
+
+@app.route("/file-transfer/classify", methods=["POST"])
+def classify_file():
+    try:
+        data = request.get_json() or {}
+        file_name = data.get("file_name", "")
+        client_ip = data.get("client_ip", "Unknown")
+        client_port = int(data.get("client_port", 0))
+        file_path = data.get("file_path", file_name)
+        file_size_bytes = int(data.get("file_size_bytes", 0))
+
+        if not file_name:
+            return jsonify({"success": False, "error": "file_name is required"}), 400
+
+        from file_classifier import classify_file_transfer
+        result = classify_file_transfer(
+            file_name=file_name,
+            client_ip=client_ip,
+            client_port=client_port,
+            file_path=file_path,
+            file_size_bytes=file_size_bytes
+        )
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route("/file-transfer/policies", methods=["GET"])
+def list_file_policies():
+    try:
+        from database.db_manager import get_file_policies
+        df = get_file_policies()
+        return jsonify({"success": True, "policies": df.to_dict(orient="records")})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route("/file-transfer/policy", methods=["POST"])
+def save_file_policy():
+    try:
+        data = request.get_json() or {}
+        policy_type = data.get("policy_type", "EXTENSION")
+        value = data.get("value", "").strip()
+        is_allowed = int(data.get("is_allowed", 1))
+        description = data.get("description", "")
+
+        if not value:
+            return jsonify({"success": False, "error": "Policy value is required"}), 400
+
+        from database.db_manager import add_file_policy
+        add_file_policy(policy_type, value, is_allowed, description)
+        return jsonify({"success": True, "message": f"Policy for '{value}' updated."})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route("/file-transfer/policy/<int:policy_id>", methods=["DELETE"])
+def remove_file_policy(policy_id):
+    try:
+        from database.db_manager import delete_file_policy
+        delete_file_policy(policy_id)
+        return jsonify({"success": True, "message": f"Policy {policy_id} deleted."})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route("/file-transfer/history", methods=["GET"])
+def file_transfer_history():
+    try:
+        client_ip = request.args.get("client_ip")
+        limit = int(request.args.get("limit", 20))
+        from database.db_manager import get_recent_file_transfers
+        df = get_recent_file_transfers(limit=limit, client_ip=client_ip)
+        return jsonify({"success": True, "transfers": df.to_dict(orient="records")})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+# ============================================================
 # START SERVER
 # ============================================================
 
@@ -268,6 +345,10 @@ if __name__ == "__main__":
     print("POST /block")
     print("POST /unblock")
     print("GET  /blocked")
+    print("POST /file-transfer/classify")
+    print("GET  /file-transfer/policies")
+    print("POST /file-transfer/policy")
+    print("GET  /file-transfer/history")
 
     print(f"http://{API_HOST}:{API_PORT}")
 

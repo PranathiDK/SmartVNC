@@ -1,5 +1,8 @@
 import sqlite3
-import pandas as pd
+try:
+    import pandas as pd
+except ImportError:
+    pd = None
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -52,6 +55,60 @@ def init_db():
             status TEXT DEFAULT 'BLOCKED'
         )
     ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS file_policies (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            policy_type TEXT,
+            value TEXT UNIQUE,
+            is_allowed INTEGER,
+            description TEXT
+        )
+    ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS file_transfers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT,
+            client_ip TEXT,
+            client_port INTEGER DEFAULT 0,
+            file_name TEXT,
+            file_path TEXT,
+            file_size_bytes INTEGER DEFAULT 0,
+            classification TEXT,
+            risk_score REAL,
+            action_taken TEXT,
+            reason TEXT
+        )
+    ''')
+    
+    # Seed default file transfer access policies if table is empty
+    cursor.execute("SELECT COUNT(*) FROM file_policies")
+    if cursor.fetchone()[0] == 0:
+        default_policies = [
+            # Allowed file extensions
+            ("EXTENSION", ".txt", 1, "Plain Text Documents"),
+            ("EXTENSION", ".pdf", 1, "PDF Documents"),
+            ("EXTENSION", ".docx", 1, "Office Word Documents"),
+            ("EXTENSION", ".png", 1, "PNG Images"),
+            ("EXTENSION", ".jpg", 1, "JPEG Images"),
+            ("EXTENSION", ".csv", 1, "Data Spreadsheets"),
+            # Not allowed / blocked extensions
+            ("EXTENSION", ".exe", 0, "Executable Binaries (Restricted)"),
+            ("EXTENSION", ".bat", 0, "Batch Shell Scripts (Restricted)"),
+            ("EXTENSION", ".zip", 0, "Compressed Archives (Restricted)"),
+            ("EXTENSION", ".env", 0, "Environment & Secret Files (Restricted)"),
+            ("EXTENSION", ".sql", 0, "Database Dumps & Scripts (Restricted)"),
+            ("EXTENSION", ".key", 0, "Cryptographic Private Keys (Restricted)"),
+            # Not allowed sensitive keywords in filename
+            ("KEYWORD", "password", 0, "Credential / Password Keywords"),
+            ("KEYWORD", "secret", 0, "Sensitive / Secret Data"),
+            ("KEYWORD", "confidential", 0, "Confidential Company Assets"),
+            ("KEYWORD", "salary", 0, "Payroll & Financial Records")
+        ]
+        cursor.executemany(
+            "INSERT OR IGNORE INTO file_policies (policy_type, value, is_allowed, description) VALUES (?, ?, ?, ?)",
+            default_policies
+        )
+        
     conn.commit()
     conn.close()
 
@@ -180,5 +237,98 @@ def get_high_risk_alerts(client_ip=None):
     else:
         query = "SELECT * FROM alerts WHERE risk_level IN ('HIGH', 'CRITICAL') ORDER BY id DESC"
         df = pd.read_sql_query(query, conn)
+    conn.close()
+    return df
+
+# ============================================================
+# FILE TRANSFER ACCESS POLICY & LOGGING
+# ============================================================
+
+def get_file_policies():
+    """Retrieve all server-configured file transfer policies."""
+    init_db()
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        df = pd.read_sql_query(
+            "SELECT id, policy_type, value, is_allowed, description FROM file_policies ORDER BY is_allowed DESC, policy_type, value",
+            conn
+        )
+    except Exception:
+        df = pd.DataFrame()
+    conn.close()
+    return df
+
+def add_file_policy(policy_type, value, is_allowed, description=""):
+    """Add or update an allowed/restricted file policy rule."""
+    init_db()
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO file_policies (policy_type, value, is_allowed, description)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(value) DO UPDATE SET
+            policy_type = excluded.policy_type,
+            is_allowed = excluded.is_allowed,
+            description = excluded.description
+    ''', (policy_type.upper().strip(), value.lower().strip(), int(is_allowed), description.strip()))
+    conn.commit()
+    conn.close()
+
+def delete_file_policy(policy_id):
+    """Delete a file policy rule by ID."""
+    init_db()
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM file_policies WHERE id = ?", (int(policy_id),))
+    conn.commit()
+    conn.close()
+
+def log_file_transfer(transfer_data):
+    """Record a file transfer evaluation and action taken."""
+    from datetime import datetime
+    init_db()
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO file_transfers (
+            timestamp, client_ip, client_port, file_name, file_path,
+            file_size_bytes, classification, risk_score, action_taken, reason
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (
+        transfer_data.get('timestamp', datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        transfer_data.get('client_ip', 'Unknown'),
+        int(transfer_data.get('client_port', 0)),
+        transfer_data.get('file_name', ''),
+        transfer_data.get('file_path', ''),
+        int(transfer_data.get('file_size_bytes', 0)),
+        transfer_data.get('classification', 'ACCESS_NOT_ALLOWED'),
+        float(transfer_data.get('risk_score', 0.0)),
+        transfer_data.get('action_taken', 'DEVICE_BLOCKED'),
+        transfer_data.get('reason', '')
+    ))
+    conn.commit()
+    conn.close()
+
+def get_recent_file_transfers(limit=10, client_ip=None):
+    """Retrieve recent file transfer activity logs."""
+    init_db()
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        if client_ip and client_ip not in ["None", "Unknown", "All Devices"]:
+            query = (
+                "SELECT id, timestamp, client_ip, client_port, file_name, file_size_bytes, "
+                "classification, risk_score, action_taken, reason "
+                "FROM file_transfers WHERE client_ip = ? ORDER BY id DESC LIMIT ?"
+            )
+            df = pd.read_sql_query(query, conn, params=(client_ip, int(limit)))
+        else:
+            query = (
+                "SELECT id, timestamp, client_ip, client_port, file_name, file_size_bytes, "
+                "classification, risk_score, action_taken, reason "
+                "FROM file_transfers ORDER BY id DESC LIMIT ?"
+            )
+            df = pd.read_sql_query(query, conn, params=(int(limit),))
+    except Exception:
+        df = pd.DataFrame()
     conn.close()
     return df

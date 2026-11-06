@@ -1,7 +1,13 @@
 import time
 from collections import defaultdict
 
-from scapy.all import sniff, IP, TCP, send
+try:
+    from scapy.all import sniff, IP, IPv6, TCP, send, conf, IFACES
+except ImportError:
+    from scapy.all import sniff, IP, TCP, send
+    IPv6 = None
+    conf = None
+    IFACES = None
 
 from live_data import write_live_data
 
@@ -14,15 +20,38 @@ sys.path.append(str(BASE_DIR))
 from config import VNC_PORT
 from database.db_manager import is_device_blocked
 
+try:
+    from file_transfer_monitor import FileTransferMonitor
+    _file_monitor = FileTransferMonitor()
+except Exception:
+    _file_monitor = None
+
 # ============================================================
 # SMARTVNC - LIVE VNC NETWORK MONITOR
 # ============================================================
 
 MONITOR_INTERVAL = 1
 IDLE_TIMEOUT = 60.0  # Allow natural client idle pauses without dropping session
-TRANSFER_RATE_THRESHOLD = 250000
+TRANSFER_RATE_THRESHOLD = 200000
 TRANSFER_CONFIRM_TICKS = 3
 TRANSFER_IDLE_TICKS = 3
+TRANSFER_IDLE_SPEED = 90000
+
+def get_active_sniff_interface():
+    """Auto-detect the primary active network interface with an assigned IPv4."""
+    try:
+        if IFACES is None:
+            return None
+        # Match interface with a non-loopback local LAN IP
+        for _, iface in IFACES.data.items():
+            ip_val = getattr(iface, "ip", None)
+            if ip_val and not str(ip_val).startswith("127.") and not str(ip_val).startswith("169.254.") and str(ip_val) != "0.0.0.0":
+                desc = getattr(iface, "description", None) or getattr(iface, "name", "Interface")
+                print(f"[+] SmartVNC Sniffer bound to active interface: {desc} ({ip_val})")
+                return iface
+    except Exception as e:
+        print(f"[!] Warning during interface detection: {e}")
+    return None
 
 # ============================================================
 # SINGLE CLIENT SESSION TRACKING
@@ -33,6 +62,8 @@ active_sessions = {}
 
 def update_transfer_burst(session, instant_bps, bytes_in_window):
     """Accumulate bytes only after sustained transfer-speed samples."""
+    confirmed = session.get("burst_bytes", 0) > 0
+
     if instant_bps >= TRANSFER_RATE_THRESHOLD:
         session["transfer_rate_ticks"] = session.get("transfer_rate_ticks", 0) + 1
         session["transfer_candidate_bytes"] = (
@@ -40,19 +71,40 @@ def update_transfer_burst(session, instant_bps, bytes_in_window):
         )
         session["transfer_idle_ticks"] = 0
 
-        if session["transfer_rate_ticks"] >= TRANSFER_CONFIRM_TICKS:
+        # Confirm if either sustained for TRANSFER_CONFIRM_TICKS or volume reaches high threshold (>= 6 MB)
+        if (
+            session["transfer_rate_ticks"] >= TRANSFER_CONFIRM_TICKS
+            or session["transfer_candidate_bytes"] >= 6000000
+        ):
             session["burst_bytes"] = (
                 session.get("burst_bytes", 0)
                 + session["transfer_candidate_bytes"]
             )
             session["transfer_candidate_bytes"] = 0
+
+    elif confirmed and instant_bps >= 140000:
+        # Transfer is already confirmed and ongoing; slight rate dip (e.g. 140k - 200k)
+        # Continue accumulating bytes into confirmed burst without resetting!
+        session["burst_bytes"] = session.get("burst_bytes", 0) + bytes_in_window
+        session["transfer_idle_ticks"] = 0
+
     else:
+        # Not high rate and not confirmed elevated
+        # If candidate volume had crossed 6 MB before dropping, promote it!
+        if session.get("transfer_candidate_bytes", 0) >= 6000000:
+            session["burst_bytes"] = (
+                session.get("burst_bytes", 0)
+                + session["transfer_candidate_bytes"]
+            )
         session["transfer_rate_ticks"] = 0
         session["transfer_candidate_bytes"] = 0
-        session["transfer_idle_ticks"] = session.get("transfer_idle_ticks", 0) + 1
 
-        if session["transfer_idle_ticks"] >= TRANSFER_IDLE_TICKS:
-            session["burst_bytes"] = 0
+        if instant_bps < TRANSFER_IDLE_SPEED:
+            session["transfer_idle_ticks"] = session.get("transfer_idle_ticks", 0) + 1
+            if session["transfer_idle_ticks"] >= TRANSFER_IDLE_TICKS:
+                session["burst_bytes"] = 0
+                session["transfer_idle_ticks"] = 0
+        else:
             session["transfer_idle_ticks"] = 0
 
     return session.get("burst_bytes", 0)
@@ -68,19 +120,23 @@ def process_packet(packet):
 
     try:
         # --------------------------------------------------------
-        # Check IP and TCP
+        # Check IP (IPv4 or IPv6) and TCP
         # --------------------------------------------------------
-
-        if not packet.haslayer(IP) or not packet.haslayer(TCP):
+        if not packet.haslayer(TCP):
             return
 
-        ip = packet[IP]
+        is_ipv4 = packet.haslayer(IP)
+        is_ipv6 = packet.haslayer(IPv6) if IPv6 is not None else False
+
+        if not is_ipv4 and not is_ipv6:
+            return
+
+        net_layer = packet[IP] if is_ipv4 else packet[IPv6]
         tcp = packet[TCP]
 
         # --------------------------------------------------------
         # Only monitor VNC TCP port 5900
         # --------------------------------------------------------
-
         if (
             tcp.sport != VNC_PORT
             and tcp.dport != VNC_PORT
@@ -92,14 +148,14 @@ def process_packet(packet):
 
         # Determine the client address and traffic direction.
         if tcp.dport == VNC_PORT:
-            c_ip = str(ip.src)
+            c_ip = str(net_layer.src)
             c_port = int(tcp.sport)
-            s_ip = str(ip.dst)
+            s_ip = str(net_layer.dst)
             is_forward = True
         else:
-            c_ip = str(ip.dst)
+            c_ip = str(net_layer.dst)
             c_port = int(tcp.dport)
-            s_ip = str(ip.src)
+            s_ip = str(net_layer.src)
             is_forward = False
 
         # --------------------------------------------------------
@@ -117,52 +173,43 @@ def process_packet(packet):
             return
 
         flags = int(tcp.flags)
+        is_syn = bool((flags & 0x02) and not (flags & 0x10))
+        is_fin_or_rst = bool((flags & 0x01) or (flags & 0x04))
+
         # --------------------------------------------------------
         # TCP FIN or RST Flag -> Clean Session Teardown
         # --------------------------------------------------------
-        if (flags & 0x01) or (flags & 0x04):  # FIN or RST
+        if is_fin_or_rst and not is_syn:
             if (
                 c_ip in active_sessions
-                and active_sessions[c_ip]["client_port"] == c_port
+                and active_sessions[c_ip].get("client_port") == c_port
             ):
                 print(f"\n[-] Client {c_ip}:{c_port} disconnected cleanly (TCP FIN/RST)")
                 del active_sessions[c_ip]
             return
 
-        # Reject new VNC connections while the single monitored client is active.
-        if active_sessions and (
+        # --------------------------------------------------------
+        # New Connection or Reconnection on new ephemeral port
+        # --------------------------------------------------------
+        if (
             c_ip not in active_sessions
-            or active_sessions[c_ip]["client_port"] != c_port
+            or is_syn
+            or active_sessions[c_ip].get("client_port") != c_port
         ):
-            if (flags & 0x02) and not (flags & 0x10):
-                try:
-                    send(
-                        IP(src=s_ip, dst=c_ip)
-                        / TCP(
-                            sport=VNC_PORT,
-                            dport=c_port,
-                            flags="RA",
-                            seq=0,
-                            ack=tcp.seq + 1,
-                        ),
-                        verbose=False,
-                    )
-                except Exception:
-                    pass
-            return
+            is_new = c_ip not in active_sessions
+            if is_new or is_syn:
+                print("\n" + "=" * 70)
+                print(f"[+] SMARTVNC: ACTIVE VNC CLIENT DETECTED: {c_ip}:{c_port}")
+                print("=" * 70)
 
-        if c_ip not in active_sessions:
-            print("\n" + "=" * 70)
-            print(f"[+] SMARTVNC: NEW VNC CLIENT DETECTED: {c_ip}:{c_port}")
-            print("=" * 70)
             active_sessions[c_ip] = {
-                "session_start": current_time,
+                "session_start": current_time if (is_new or is_syn) else active_sessions[c_ip].get("session_start", current_time),
                 "last_packet_time": current_time,
                 "client_port": c_port,
-                "forward_packets": 0,
-                "backward_packets": 0,
-                "forward_bytes": 0,
-                "backward_bytes": 0,
+                "forward_packets": 0 if is_syn else active_sessions.get(c_ip, {}).get("forward_packets", 0),
+                "backward_packets": 0 if is_syn else active_sessions.get(c_ip, {}).get("backward_packets", 0),
+                "forward_bytes": 0 if is_syn else active_sessions.get(c_ip, {}).get("forward_bytes", 0),
+                "backward_bytes": 0 if is_syn else active_sessions.get(c_ip, {}).get("backward_bytes", 0),
                 "last_update_time": current_time,
                 "last_total_bytes": 0,
                 "last_total_packets": 0,
@@ -352,8 +399,10 @@ def main():
 
 
     # --------------------------------------------------------
-    # Initially mark VNC as inactive
+    # Initially mark VNC as inactive and detect network interface
     # --------------------------------------------------------
+
+    sniff_iface = get_active_sniff_interface()
 
     reset_session()
 
@@ -370,12 +419,16 @@ def main():
             # =================================================
 
             try:
-                sniff(
-                    filter=f"tcp port {VNC_PORT}",
-                    prn=process_packet,
-                    store=False,
-                    timeout=MONITOR_INTERVAL
-                )
+                sniff_kwargs = {
+                    "filter": f"tcp port {VNC_PORT}",
+                    "prn": process_packet,
+                    "store": False,
+                    "timeout": MONITOR_INTERVAL
+                }
+                if sniff_iface is not None:
+                    sniff_kwargs["iface"] = sniff_iface
+
+                sniff(**sniff_kwargs)
             except Exception:
                 time.sleep(0.1)
 
@@ -391,6 +444,8 @@ def main():
             ):
                 try:
                     update_live_data()
+                    if _file_monitor:
+                        _file_monitor.scan_once()
                 except Exception:
                     pass
 

@@ -57,7 +57,38 @@ from database.db_manager import log_alert
 _last_notification_time = 0
 
 def clear_blocked_cache(client_ip=None):
-    pass
+    """Clear stale block state for a specific IP or all known blocked devices.
+
+    The project stores block state in SQLite, and the unblock flow calls this
+    helper before re-running the firewall enforcement logic. The previous
+    implementation was a stub, leaving blocked entries in place after an unblock
+    request. This helper intentionally does only the state cleanup required by
+    the project: mark known blocked devices as unblocked without raising on
+    unrelated errors.
+    """
+    try:
+        from database.db_manager import get_blocked_devices, record_unblocked_device
+    except Exception:
+        return False
+
+    try:
+        if client_ip and client_ip not in ["Unknown", "None", "", "all"]:
+            record_unblocked_device(client_ip)
+            return True
+
+        blocked = get_blocked_devices()
+        if blocked.empty:
+            return True
+
+        for ip in blocked["client_ip"].dropna().astype(str).unique():
+            try:
+                record_unblocked_device(ip)
+            except Exception:
+                continue
+
+        return True
+    except Exception:
+        return False
 
 def _trigger_automated_block(client_ip, risk_score):
     from database.db_manager import is_device_blocked
